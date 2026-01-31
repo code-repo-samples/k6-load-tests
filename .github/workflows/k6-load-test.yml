@@ -31,42 +31,48 @@ jobs:
   run-k6-test:
     name: Execute K6 Load Test
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
+      # ------------------------------------------------------------
+      # Network discovery (default VPC, subnets, security group)
+      # ------------------------------------------------------------
       - name: Get default VPC and subnets
         id: vpc-info
         run: |
-          # Get default VPC
           VPC_ID=$(aws ec2 describe-vpcs \
             --filters "Name=isDefault,Values=true" \
             --query 'Vpcs[0].VpcId' \
             --output text)
+
           echo "vpc-id=${VPC_ID}" >> $GITHUB_OUTPUT
-          
-          # Get subnets in default VPC
+
           SUBNETS=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=${VPC_ID}" \
             --query 'Subnets[].SubnetId' \
             --output text | tr '\t' ',')
+
           echo "subnet-ids=${SUBNETS}" >> $GITHUB_OUTPUT
-          
-          # Get default security group
+
           SG_ID=$(aws ec2 describe-security-groups \
             --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=default" \
             --query 'SecurityGroups[0].GroupId' \
             --output text)
+
           echo "security-group-id=${SG_ID}" >> $GITHUB_OUTPUT
-      
+
+      # ------------------------------------------------------------
+      # Resolve task definition
+      # ------------------------------------------------------------
       - name: Get latest task definition
         id: task-def
         run: |
@@ -74,15 +80,22 @@ jobs:
             --task-definition ${{ env.TASK_DEFINITION }} \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
+
           echo "task-def-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
-      
+
+      # ------------------------------------------------------------
+      # Generate run ID
+      # ------------------------------------------------------------
       - name: Generate run ID
         id: run-info
         run: |
           RUN_ID="$(date +%Y%m%d-%H%M%S)-${{ github.run_number }}"
           echo "run-id=${RUN_ID}" >> $GITHUB_OUTPUT
           echo "Run ID: ${RUN_ID}"
-      
+
+      # ------------------------------------------------------------
+      # Run ECS Fargate task
+      # ------------------------------------------------------------
       - name: Run ECS Fargate task
         id: run-task
         run: |
@@ -100,37 +113,41 @@ jobs:
                 {
                   "name": "k6-runner",
                   "environment": [
-                    {"name": "APP_FOLDER", "value": "${{ github.event.inputs.app_folder }}"},
-                    {"name": "SCRIPT_NAME", "value": "${{ github.event.inputs.script_name }}"},
-                    {"name": "GITHUB_REPO_URL", "value": "${{ github.server_url }}/${{ github.repository }}.git"},
-                    {"name": "GITHUB_BRANCH", "value": "${{ github.ref_name }}"},
-                    {"name": "GITHUB_TOKEN", "value": "${{ secrets.GITHUB_TOKEN }}"},
-                    {"name": "S3_BUCKET", "value": "${{ env.S3_BUCKET }}"},
-                    {"name": "AWS_REGION", "value": "${{ env.AWS_REGION }}"},
-                    {"name": "RUN_ID", "value": "${{ steps.run-info.outputs.run-id }}"},
-                    {"name": "K6_DURATION", "value": "${{ github.event.inputs.duration }}"},
-                    {"name": "K6_VUS", "value": "${{ github.event.inputs.vus }}"}
+                    { "name": "APP_FOLDER", "value": "${{ github.event.inputs.app_folder }}" },
+                    { "name": "SCRIPT_NAME", "value": "${{ github.event.inputs.script_name }}" },
+                    { "name": "K6_DURATION", "value": "${{ github.event.inputs.duration }}" },
+                    { "name": "K6_VUS", "value": "${{ github.event.inputs.vus }}" },
+                    { "name": "RUN_ID", "value": "${{ steps.run-info.outputs.run-id }}" },
+                    { "name": "S3_BUCKET", "value": "${{ env.S3_BUCKET }}" },
+                    { "name": "AWS_REGION", "value": "${{ env.AWS_REGION }}" },
+                    { "name": "GITHUB_REPO_URL", "value": "${{ github.server_url }}/${{ github.repository }}.git" },
+                    { "name": "GITHUB_BRANCH", "value": "${{ github.ref_name }}" },
+                    { "name": "GITHUB_TOKEN", "value": "${{ secrets.GITHUB_TOKEN }}" },
+                    { "name": "AUTH_HEADER", "value": "${{ secrets.AUTH_HEADER }}" }
                   ]
                 }
               ]
             }' \
             --query 'tasks[0].taskArn' \
             --output text)
-          
+
           echo "task-arn=${TASK_ARN}" >> $GITHUB_OUTPUT
           echo "ECS Task ARN: ${TASK_ARN}"
-      
-      - name: Wait for task to complete
+
+      # ------------------------------------------------------------
+      # Wait for task completion
+      # ------------------------------------------------------------
+      - name: Wait for ECS task to complete
         run: |
           echo "Waiting for ECS task to complete..."
-          echo "Task ARN: ${{ steps.run-task.outputs.task-arn }}"
-          
           aws ecs wait tasks-stopped \
             --cluster ${{ env.ECS_CLUSTER }} \
             --tasks ${{ steps.run-task.outputs.task-arn }}
-          
-          echo "Task completed!"
-      
+          echo "Task completed"
+
+      # ------------------------------------------------------------
+      # Capture exit code
+      # ------------------------------------------------------------
       - name: Get task exit code
         id: task-result
         run: |
@@ -139,52 +156,32 @@ jobs:
             --tasks ${{ steps.run-task.outputs.task-arn }} \
             --query 'tasks[0].containers[0].exitCode' \
             --output text)
-          
+
           echo "exit-code=${EXIT_CODE}" >> $GITHUB_OUTPUT
           echo "Task exit code: ${EXIT_CODE}"
-          
+
           if [ "${EXIT_CODE}" != "0" ]; then
             echo "::error::K6 test failed with exit code ${EXIT_CODE}"
             exit 1
           fi
-      
-      - name: Generate results URL
+
+      # ------------------------------------------------------------
+      # Results location
+      # ------------------------------------------------------------
+      - name: Print results location
         run: |
-          S3_PATH="https://s3.console.aws.amazon.com/s3/buckets/${{ env.S3_BUCKET }}?prefix=${{ github.event.inputs.app_folder }}/${{ steps.run-info.outputs.run-id }}/&region=${{ env.AWS_REGION }}"
-          echo "Results available at: ${S3_PATH}"
-          echo "::notice::K6 test results: ${S3_PATH}"
-      
+          S3_URL="https://s3.console.aws.amazon.com/s3/buckets/${{ env.S3_BUCKET }}?prefix=${{ github.event.inputs.app_folder }}/${{ steps.run-info.outputs.run-id }}/&region=${{ env.AWS_REGION }}"
+          echo "Results available at:"
+          echo "${S3_URL}"
+          echo "::notice::K6 results: ${S3_URL}"
+
+      # ------------------------------------------------------------
+      # CloudWatch logs link
+      # ------------------------------------------------------------
       - name: View CloudWatch logs
         if: always()
         run: |
           LOG_URL="https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group/\$252Fecs\$252Fk6-logs-${{ env.AWS_ACCOUNT_ID }}"
-          echo "CloudWatch Logs: ${LOG_URL}"
-          echo "::notice::View logs: ${LOG_URL}"
-
-  download-results:
-    name: Download and Archive Results
-    runs-on: ubuntu-latest
-    needs: run-k6-test
-    if: always()
-    
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Download results from S3
-        run: |
-          RUN_ID="$(date +%Y%m%d-%H%M%S)-${{ github.run_number }}"
-          mkdir -p results
-          aws s3 cp s3://${{ env.S3_BUCKET }}/${{ github.event.inputs.app_folder }}/${RUN_ID}/ results/ --recursive || true
-      
-      - name: Upload results as artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: k6-results-${{ github.event.inputs.app_folder }}-${{ github.run_number }}
-          path: results/
-          retention-days: 30
+          echo "CloudWatch Logs:"
+          echo "${LOG_URL}"
+          echo "::notice::View CloudWatch logs: ${LOG_URL}"
