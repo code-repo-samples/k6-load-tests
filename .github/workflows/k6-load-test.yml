@@ -48,7 +48,7 @@ jobs:
         id: resources
         run: |
           SUFFIX="${{ github.event.inputs.version_suffix }}"
-          echo "ecs-cluster=k6-cluster-${{ env.AWS_ACCOUNT_ID }}${SUFFIX}" >> $GITHUB_OUTPUT
+          echo "ecs-cluster=k6-cluster-v3-${{ env.AWS_ACCOUNT_ID }}${SUFFIX}" >> $GITHUB_OUTPUT
           echo "task-definition=k6-task-${{ env.AWS_ACCOUNT_ID }}${SUFFIX}" >> $GITHUB_OUTPUT
           echo "s3-bucket=k6-artifacts-${{ env.AWS_ACCOUNT_ID }}${SUFFIX}" >> $GITHUB_OUTPUT
       
