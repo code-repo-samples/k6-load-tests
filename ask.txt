@@ -1,0 +1,1087 @@
+Subject: AWS Infrastructure Setup Request - K6 Load Testing on ECS/Fargate
+
+Hi DevOps Team,
+
+I need AWS infrastructure set up for running K6 load tests via ECS/Fargate, triggered from GitHub Actions. Below are the detailed requirements.
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Purpose: Run K6 load tests in isolated ECS Fargate containers
+Trigger: GitHub Actions workflows (I'll handle the GitHub side)
+Your Scope: AWS infrastructure setup only
+
+================================================================================
+AWS RESOURCES REQUIRED
+================================================================================
+
+Account Details:
+• AWS Account ID: 983610474809
+• Region: us-east-1
+
+Please create the following resources:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 1. S3 BUCKET                                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Name: k6-artifacts-983610474809
+Configuration:
+  • Private (block all public access)
+  • Server-side encryption: SSE-S3 (AES256)
+  • Versioning: Enabled
+  • Region: us-east-1
+
+Purpose: Store test results and artifacts
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 2. IAM ROLE - ECS Task Execution Role                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Role Name: k6-ecs-task-execution-role-983610474809
+
+Trust Policy:
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+
+Attach These Managed Policies:
+  • arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+Create and Attach These Custom Policies:
+
+a) S3 Access Policy (name: k6-s3-write-policy-983610474809):
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::k6-artifacts-983610474809/*"
+    }
+  ]
+}
+
+b) CloudWatch Logs Policy (name: k6-cloudwatch-logs-policy-983610474809):
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:983610474809:log-group:/ecs/k6-logs-983610474809:*"
+    }
+  ]
+}
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 3. IAM USER - For GitHub Actions                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+User Name: k6-ecs-manager
+
+Create and Attach This Custom Policy (name: k6-ecs-management-policy-983610474809):
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:*"
+      ],
+      "Resource": [
+        "arn:aws:ecs:us-east-1:983610474809:cluster/k6-cluster-983610474809",
+        "arn:aws:ecs:us-east-1:983610474809:task-definition/k6-task-983610474809:*",
+        "arn:aws:ecs:us-east-1:983610474809:task/k6-cluster-983610474809/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RunTask",
+        "ecs:DescribeTasks",
+        "ecs:ListTasks",
+        "ecs:StopTask",
+        "ecs:DescribeClusters",
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListClusters",
+        "ecs:ListTaskDefinitions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::983610474809:role/k6-ecs-task-execution-role-983610474809"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+Also attach this S3 policy to the user:
+  • k6-s3-write-policy-983610474809 (created above)
+
+IMPORTANT: Create access keys for this user and share them securely with me.
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 4. CLOUDWATCH LOG GROUP                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Log Group Name: /ecs/k6-logs-983610474809
+Retention: 30 days
+Region: us-east-1
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 5. ECS CLUSTER                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Cluster Name: k6-cluster-983610474809
+Type: Fargate (serverless)
+Configuration:
+  • Enable Container Insights
+  • Default capacity provider: FARGATE
+Region: us-east-1
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 6. ECR REPOSITORY                                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Repository Name: k6-runner
+Configuration:
+  • Scan on push: Enabled
+  • Encryption: AES256
+  • Lifecycle policy: Keep last 10 images
+
+Region: us-east-1
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 7. ECS TASK DEFINITION                                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Family Name: k6-task-983610474809
+Launch Type: Fargate
+Network Mode: awsvpc
+CPU: 1024 (1 vCPU)
+Memory: 2048 (2 GB)
+
+Execution Role ARN: arn:aws:iam::983610474809:role/k6-ecs-task-execution-role-983610474809
+Task Role ARN: arn:aws:iam::983610474809:role/k6-ecs-task-execution-role-983610474809
+
+Container Definition:
+  Name: k6-runner
+  Image: 983610474809.dkr.ecr.us-east-1.amazonaws.com/k6-runner:latest
+  Essential: true
+  
+  Environment Variables:
+    - AWS_DEFAULT_REGION: us-east-1
+    - S3_BUCKET: k6-artifacts-983610474809
+  
+  Log Configuration:
+    Log Driver: awslogs
+    Options:
+      awslogs-group: /ecs/k6-logs-983610474809
+      awslogs-region: us-east-1
+      awslogs-stream-prefix: k6
+
+NOTE: I'll provide the Docker image after infrastructure is ready.
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 8. NETWORK CONFIGURATION (Optional but Recommended)                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+For now, we can use the default VPC. Please confirm:
+  • Default VPC ID
+  • Available subnet IDs (preferably private with NAT)
+  • Default security group ID
+
+If private subnets don't exist, tasks can run in public subnets with auto-assign public IP.
+
+================================================================================
+DELIVERABLES NEEDED FROM YOUR TEAM
+================================================================================
+
+Once setup is complete, please provide:
+
+1. ✅ Confirmation that all resources are created
+2. ✅ AWS Access Key ID for user: k6-ecs-manager
+3. ✅ AWS Secret Access Key for user: k6-ecs-manager
+4. ✅ ECR Repository URI (e.g., 983610474809.dkr.ecr.us-east-1.amazonaws.com/k6-runner)
+5. ✅ VPC/Subnet/SecurityGroup IDs being used
+6. ✅ Any naming variations if you need to use different names
+
+================================================================================
+WHAT I'LL HANDLE (NO ACTION NEEDED FROM YOUR SIDE)
+================================================================================
+
+• GitHub Actions workflow configuration
+• Docker image creation and push to ECR
+• GitHub repository setup and secrets
+• Running and monitoring tests
+• Managing test scripts
+
+================================================================================
+SECURITY NOTES
+================================================================================
+
+• All resources should be in us-east-1 region
+• S3 bucket must be private (no public access)
+• IAM policies follow least-privilege principle
+• Access keys should be shared securely (e.g., encrypted email, vault)
+• Enable CloudTrail logging for audit if not already enabled
+
+================================================================================
+AUTOMATION OPTION (If You Prefer)
+================================================================================
+
+If you prefer to use Infrastructure as Code, I have a bash script that creates
+all these resources automatically using AWS CLI. Let me know if you'd like to
+review it. The script is idempotent and safe to run multiple times.
+
+Alternatively, I can provide:
+• Terraform configuration
+• CloudFormation template
+• CDK code (TypeScript/Python)
+
+Just let me know your preference.
+
+================================================================================
+TIMELINE
+================================================================================
+
+Target completion: [Your Date]
+Please let me know if you need any clarification on the requirements.
+
+================================================================================
+COST ESTIMATE
+================================================================================
+
+Expected monthly cost for this setup:
+• S3 Storage: ~$0.50/month (based on 20GB of test results)
+• ECS Fargate: ~$1-2/month (100 test runs, 5 min each)
+• CloudWatch Logs: ~$0.50/month
+• ECR: ~$0.10/month
+• Data Transfer: Minimal
+
+Total: ~$2-3/month for typical usage
+
+================================================================================
+QUESTIONS OR CLARIFICATIONS
+================================================================================
+
+If you have any questions about:
+• Why specific permissions are needed
+• Security implications
+• Networking setup
+• Resource sizing
+
+Please let me know and I'm happy to discuss.
+
+Thanks,
+[Your Name]
+
+================================================================================
+APPENDIX: QUICK SETUP CHECKLIST
+================================================================================
+
+☐ S3 Bucket: k6-artifacts-983610474809
+☐ IAM Role: k6-ecs-task-execution-role-983610474809
+☐ IAM User: k6-ecs-manager (with access keys)
+☐ CloudWatch Log Group: /ecs/k6-logs-983610474809
+☐ ECS Cluster: k6-cluster-983610474809
+☐ ECR Repository: k6-runner
+☐ ECS Task Definition: k6-task-983610474809
+☐ Custom IAM Policies: 3 policies created and attached
+☐ Access keys generated and shared securely
+
+================================================================================
+
+
+
+
+
+
+# K6 Load Testing Infrastructure: EC2 vs ECS Comparison
+
+## Executive Summary
+
+This document compares two approaches for running K6 load tests with **static IP requirement** for API whitelisting.
+
+**Key Requirements:**
+- Run K6 load tests triggered from GitHub Actions
+- Static IP(s) for whitelisting across 100+ applications
+- Support parallel test execution (2-3 tests simultaneously)
+- Handle up to 800 TPS (stress tests), typically 100-200 TPS (load tests)
+- ~80 tests per month (40 steady-state 1-hour tests + 40 smoke tests 15-20 min)
+
+**Quick Comparison:**
+
+| Factor | EC2 VMs (Start/Stop) | ECS Fargate + NAT Gateway |
+|--------|---------------------|---------------------------|
+| **Monthly Cost** | **$22-24** | **$48** |
+| **Setup Complexity** | Low | High |
+| **Operational Complexity** | Low | Medium |
+| **Scalability** | Limited (2-3 parallel) | Unlimited |
+| **Maintenance** | Quarterly OS updates | Minimal |
+| **Static IP** | ✅ 2 IPs | ✅ 1 IP |
+
+---
+
+## 📊 Detailed Comparison
+
+### 1. Architecture Overview
+
+#### **Approach A: EC2 VMs with Start/Stop**
+
+```
+┌─────────────────────────────────────────────────┐
+│         GitHub Actions (Orchestrator)           │
+└──────────────┬──────────────────────────────────┘
+               │
+        ┌──────┴──────┐
+        ▼             ▼
+   ┌─────────┐   ┌─────────┐
+   │  VM-1   │   │  VM-2   │
+   │ Stopped │   │ Stopped │  ← Default state (saving cost)
+   └─────────┘   └─────────┘
+        │             │
+   [Start on demand]  │
+        ▼             ▼
+   ┌─────────┐   ┌─────────┐
+   │  VM-1   │   │  VM-2   │
+   │ Running │   │ Running │  ← During tests only
+   │ K6 Test │   │ K6 Test │
+   │ EIP-1   │   │ EIP-2   │  ← Static IPs
+   └────┬────┘   └────┬────┘
+        │             │
+        └──────┬──────┘
+               ▼
+      Your APIs (Whitelisted: 2 IPs)
+               ▼
+      Results uploaded to S3
+               ▼
+   [Stop automatically after test]
+```
+
+**How it works:**
+1. GitHub Actions workflow triggered
+2. AWS API call: Start EC2 instance(s)
+3. Wait ~30 seconds for VM boot
+4. SSH to VM, execute k6 test
+5. Test runs with static IP
+6. Upload results to S3/GitHub
+7. AWS API call: Stop EC2 instance(s)
+8. **Pay only for runtime hours**
+
+---
+
+#### **Approach B: ECS Fargate + NAT Gateway**
+
+```
+┌─────────────────────────────────────────────────┐
+│         GitHub Actions (Orchestrator)           │
+└──────────────┬──────────────────────────────────┘
+               │
+               ▼
+   ┌───────────────────────┐
+   │   ECS Cluster         │
+   │   (Fargate)           │
+   └───────────┬───────────┘
+               │
+        ┌──────┴──────┬──────────┐
+        ▼             ▼          ▼
+   ┌─────────┐  ┌─────────┐  ┌─────────┐
+   │ Task-1  │  │ Task-2  │  │ Task-3  │  ← Containers
+   │ K6 Test │  │ K6 Test │  │ K6 Test │    (spun up on demand)
+   └────┬────┘  └────┬────┘  └────┬────┘
+        │            │            │
+        └────────────┴────────────┘
+                     │
+            (Private Subnet)
+                     │
+                     ▼
+          ┌──────────────────┐
+          │  NAT Gateway     │  ← Static IP (always running)
+          │  (Static EIP)    │     $32/month even when idle
+          └────────┬─────────┘
+                   │
+                   ▼
+      Your APIs (Whitelisted: 1 IP)
+                   ▼
+      Results uploaded to S3
+                   ▼
+   [Container auto-terminates]
+```
+
+**How it works:**
+1. GitHub Actions workflow triggered
+2. ECS API call: Run task(s)
+3. Container starts (~30-60 seconds)
+4. K6 test runs inside container
+5. Traffic routed through NAT Gateway (static IP)
+6. Upload results to S3
+7. Container terminates automatically
+8. **NAT Gateway runs 24/7** (cost never stops)
+
+---
+
+## 💰 Cost Analysis
+
+### Monthly Cost Breakdown
+
+#### **EC2 VMs (2 × t3.xlarge with Start/Stop)**
+
+| Component | Calculation | Monthly Cost |
+|-----------|-------------|--------------|
+| **Compute Time** | 53.3 hours × $0.1664/hour | $8.87 |
+| **Storage (2×30GB)** | 2 × $3/month | $6.00 |
+| **Elastic IPs (2)** | 2 × $3.65/month (when stopped) | $7.30 |
+| **S3 Storage** | Test results | $2.00 |
+| **Data Transfer** | Minimal | $0.50 |
+| **TOTAL** | | **$24.67** |
+
+**Per-test cost:** $0.31
+
+---
+
+#### **ECS Fargate + NAT Gateway**
+
+| Component | Calculation | Monthly Cost |
+|-----------|-------------|--------------|
+| **ECS Compute** | 53.3 hours × $0.233/hour (4vCPU, 16GB) | $12.42 |
+| **NAT Gateway** | 730 hours × $0.045/hour | $32.85 |
+| **NAT Data Processing** | ~20GB × $0.045/GB | $0.90 |
+| **S3 Storage** | Test results | $2.00 |
+| **CloudWatch Logs** | Log ingestion | $0.50 |
+| **TOTAL** | | **$48.67** |
+
+**Per-test cost:** $0.61
+
+---
+
+### Cost Comparison at Different Usage Levels
+
+| Tests/Month | Avg Duration | EC2 VMs | ECS + NAT | Savings with EC2 |
+|-------------|--------------|---------|-----------|------------------|
+| 40 tests | 30 min | $16.50 | $42.00 | **61% cheaper** |
+| 80 tests | 30 min | $24.67 | $48.67 | **49% cheaper** |
+| 100 tests | 1 hour | $30.50 | $55.00 | **45% cheaper** |
+| 200 tests | 30 min | $41.00 | $67.00 | **39% cheaper** |
+
+**EC2 is consistently 40-60% cheaper due to NAT Gateway's 24/7 cost.**
+
+---
+
+### Break-Even Analysis
+
+**When does ECS become cheaper?**
+
+NAT Gateway costs $32.85/month regardless of usage.
+EC2 compute is $0.1664/hour.
+
+Break-even: $32.85 ÷ $0.1664 = **197 hours/month**
+
+**If your VMs run more than 197 hours/month (6.5 hours/day), ECS becomes cheaper.**
+
+**Your usage:** 53.3 hours/month
+**Conclusion:** EC2 is 3.7× below break-even point → **EC2 wins on cost**
+
+---
+
+## 🔧 Technical Comparison
+
+### Setup Complexity
+
+#### **EC2 VMs**
+
+**Initial Setup (DevOps Team):**
+- ✅ Launch 2 × t3.xlarge instances
+- ✅ Allocate 2 × Elastic IPs
+- ✅ Install K6 and dependencies (one-time)
+- ✅ Configure security groups
+- ✅ Create IAM user (EC2 start/stop permissions)
+- ✅ Install auto-shutdown script (safety)
+
+**Complexity:** **Low** (standard VM provisioning)
+**Time to deploy:** 2-3 hours
+**Skills required:** Basic AWS EC2 knowledge
+
+**Ongoing Setup (Per Test):**
+```yaml
+# GitHub Actions workflow
+1. Start EC2 instance (AWS CLI)
+2. Wait for ready (~30 sec)
+3. SSH and run k6 test
+4. Upload results
+5. Stop EC2 instance
+```
+
+---
+
+#### **ECS Fargate + NAT Gateway**
+
+**Initial Setup (DevOps Team):**
+- ⚠️ Create VPC with public/private subnets
+- ⚠️ Create NAT Gateway in public subnet
+- ⚠️ Configure route tables (private → NAT)
+- ⚠️ Create ECS cluster
+- ⚠️ Build and push Docker image to ECR
+- ⚠️ Create ECS task definition
+- ⚠️ Configure CloudWatch log groups
+- ⚠️ Create IAM roles (task execution + task role)
+- ⚠️ Set up security groups for tasks
+
+**Complexity:** **High** (networking + containers)
+**Time to deploy:** 6-8 hours (first time)
+**Skills required:** Advanced AWS (VPC, ECS, networking)
+
+**Ongoing Setup (Per Test):**
+```yaml
+# GitHub Actions workflow
+1. Run ECS task (AWS CLI)
+2. Wait for container start (~60 sec)
+3. Monitor task status
+4. Results auto-uploaded from container
+```
+
+**Note:** Simpler workflow but complex infrastructure
+
+---
+
+## ⚙️ Operational Complexity
+
+### Day-to-Day Operations
+
+#### **EC2 VMs**
+
+**Routine Tasks:**
+- ✅ Quarterly OS updates (Ubuntu security patches)
+- ✅ Monitor storage usage (cleanup old test data)
+- ✅ Verify VMs stopped after tests (cost safety)
+
+**Troubleshooting:**
+- ✅ SSH into VM for debugging
+- ✅ Check `/var/log/k6/` for test logs
+- ✅ Easy to reproduce issues locally
+
+**Maintenance Time:** ~2 hours/quarter
+
+**Skills Required:** Basic Linux administration
+
+---
+
+#### **ECS Fargate + NAT Gateway**
+
+**Routine Tasks:**
+- ✅ Update Docker image when k6 version changes
+- ✅ Monitor CloudWatch logs for errors
+- ✅ Manage ECR image lifecycle
+- ⚠️ NAT Gateway monitoring (health, data transfer)
+
+**Troubleshooting:**
+- ⚠️ Check CloudWatch logs (no SSH access)
+- ⚠️ Debug networking issues (NAT, route tables)
+- ⚠️ Task fails are harder to debug
+
+**Maintenance Time:** ~1 hour/quarter (less maintenance, but harder when issues occur)
+
+**Skills Required:** AWS containers, networking, CloudWatch
+
+---
+
+## 📈 Scalability
+
+### Parallel Execution
+
+#### **EC2 VMs (2 instances)**
+
+**Capacity:**
+- 2 tests in parallel ✅
+- 3rd test queues (waits for available VM)
+
+**Scaling Up:**
+- Add 3rd VM manually
+- Cost: Linear increase (~$12/VM/month)
+- Process: 30 minutes to provision
+
+**Limitations:**
+- Fixed capacity (pre-provisioned VMs)
+- Max practical: 5 VMs (management overhead)
+
+**Best For:** Predictable workload (your case: 80 tests/month)
+
+---
+
+#### **ECS Fargate + NAT**
+
+**Capacity:**
+- Unlimited parallel tasks ✅
+- Run 10, 50, 100 tests simultaneously
+- ECS auto-manages container placement
+
+**Scaling Up:**
+- Automatic (just run more tasks)
+- Cost: Linear with usage
+- Process: Instant (no provisioning)
+
+**Limitations:**
+- ECS service quotas (default: 1000 tasks)
+- NAT Gateway bandwidth (5 Gbps, rarely hit)
+
+**Best For:** Unpredictable spikes, massive parallelism
+
+---
+
+### Resource Utilization
+
+#### **EC2 VMs**
+
+**t3.xlarge per VM:**
+- 4 vCPU
+- 16 GB RAM
+- Can handle: ~800 TPS, 2000 VUs ✅
+
+**Your Tests:**
+- Typical: 200 TPS (25% utilization)
+- Max: 800 TPS (100% utilization)
+
+**Efficiency:** Good for your workload
+
+---
+
+#### **ECS Fargate**
+
+**Per Task:**
+- 4 vCPU (4096 units)
+- 16 GB (16384 MB)
+- Same capacity as t3.xlarge
+
+**Your Tests:**
+- Identical performance to EC2
+- Can size tasks independently (use 2 vCPU for smoke tests)
+
+**Efficiency:** Better resource optimization (right-size per test)
+
+---
+
+## 🔒 Security & Compliance
+
+### Static IP for Whitelisting
+
+#### **EC2 VMs**
+
+**Static IPs:**
+- 2 × Elastic IPs (one per VM)
+- **Whitelist 2 IPs** across all applications
+
+**Pros:**
+- ✅ Dedicated IPs per VM
+- ✅ Never changes (unless you release it)
+- ✅ Simple to understand
+
+**Cons:**
+- ⚠️ 2 IPs to whitelist (minor admin overhead)
+
+---
+
+#### **ECS + NAT Gateway**
+
+**Static IP:**
+- 1 × NAT Gateway Elastic IP
+- **Whitelist 1 IP** across all applications
+
+**Pros:**
+- ✅ Single IP to manage
+- ✅ Shared across all tasks
+
+**Cons:**
+- ⚠️ If NAT Gateway fails, all tests fail
+- ⚠️ Harder to troubleshoot which test is calling which API
+
+---
+
+### Security Posture
+
+#### **EC2 VMs**
+
+**Attack Surface:**
+- VMs directly on internet (with Elastic IP)
+- SSH access required
+- OS-level security responsibilities
+
+**Mitigations:**
+- Restrict SSH to GitHub Action IPs only
+- Auto-shutdown after tests (reduces exposure time)
+- Regular OS patching
+
+**Responsibility:** You manage OS security
+
+---
+
+#### **ECS Fargate + NAT**
+
+**Attack Surface:**
+- Containers in private subnet (no direct internet access)
+- NAT Gateway is managed by AWS
+- No SSH access (smaller attack surface)
+
+**Mitigations:**
+- AWS manages underlying infrastructure
+- Container security scanning in ECR
+- Immutable infrastructure (fresh container per test)
+
+**Responsibility:** AWS manages infrastructure, you manage container image
+
+**Winner on Security:** ECS (smaller attack surface, managed infrastructure)
+
+---
+
+## 🛠️ Maintenance & Updates
+
+### K6 Version Updates
+
+#### **EC2 VMs**
+
+**Process:**
+1. SSH into each VM
+2. Run: `sudo apt update && sudo apt upgrade k6`
+3. Restart if needed
+4. Test one VM, then replicate to others
+
+**Time:** 30 minutes (manual but simple)
+**Frequency:** Quarterly (or when new k6 features needed)
+
+---
+
+#### **ECS Fargate**
+
+**Process:**
+1. Update Dockerfile with new k6 version
+2. Rebuild Docker image
+3. Push to ECR
+4. Update task definition
+5. Old tasks auto-use new image
+
+**Time:** 15 minutes (more automated)
+**Frequency:** Same (quarterly)
+
+**Winner:** ECS (more automated, less manual work)
+
+---
+
+### OS/Infrastructure Updates
+
+#### **EC2 VMs**
+
+**Responsibility:** You
+- Ubuntu security patches: Monthly
+- Kernel updates: Quarterly
+- Reboot required occasionally
+
+**Time:** 1-2 hours/quarter
+
+---
+
+#### **ECS Fargate**
+
+**Responsibility:** AWS
+- Underlying OS: Managed by AWS
+- No patching needed
+- No reboots needed
+
+**Time:** 0 hours (AWS handles it)
+
+**Winner:** ECS (zero maintenance)
+
+---
+
+## 🚨 Failure Scenarios
+
+### What Happens When Things Fail?
+
+#### **EC2 VMs**
+
+| Failure | Impact | Recovery | Time |
+|---------|--------|----------|------|
+| VM fails to start | Test fails | Retry start or use VM-2 | 1 min |
+| VM crashes mid-test | Test fails | Auto-restart | 2 min |
+| Network issue | Test fails | SSH in, diagnose | 10 min |
+| Disk full | Test fails | SSH in, cleanup | 5 min |
+
+**Pros:** Easy to debug (SSH access)
+**Cons:** Manual intervention often needed
+
+---
+
+#### **ECS Fargate + NAT**
+
+| Failure | Impact | Recovery | Time |
+|---------|--------|----------|------|
+| Task fails to start | Test fails | ECS auto-retries | 2 min |
+| Container crashes | Test fails | Check CloudWatch logs | 10 min |
+| NAT Gateway fails | All tests fail | AWS auto-recovers (rare) | 5 min |
+| Network issue | Test fails | Check VPC/routes | 30 min |
+
+**Pros:** Auto-recovery for many issues
+**Cons:** Harder to debug (no SSH, need CloudWatch expertise)
+
+---
+
+## 🎯 Feature Comparison Matrix
+
+| Feature | EC2 VMs | ECS Fargate + NAT | Winner |
+|---------|---------|-------------------|--------|
+| **Monthly Cost** | $24 | $48 | EC2 |
+| **Setup Time** | 2-3 hours | 6-8 hours | EC2 |
+| **Scalability** | 2-3 parallel | Unlimited | ECS |
+| **Maintenance** | 2 hours/quarter | 1 hour/quarter | ECS |
+| **Debugging** | SSH (easy) | CloudWatch (harder) | EC2 |
+| **Static IP** | ✅ 2 IPs | ✅ 1 IP | Tie |
+| **Auto-scaling** | Manual | Automatic | ECS |
+| **Security** | You manage | AWS managed | ECS |
+| **Flexibility** | High | Medium | EC2 |
+| **Vendor Lock-in** | Low | High (AWS-specific) | EC2 |
+| **Skills Required** | Basic Linux | Advanced AWS | EC2 |
+| **Live Dashboard** | Easy (http://IP:5665) | Complex (need ALB) | EC2 |
+
+---
+
+## 📋 Decision Framework
+
+### Choose **EC2 VMs** if:
+
+✅ **Cost is primary concern** (50% cheaper)
+✅ **Predictable workload** (80-100 tests/month)
+✅ **Limited AWS expertise** (basic skills sufficient)
+✅ **Need easy debugging** (SSH access important)
+✅ **Want live k6 dashboard** (http://IP:5665)
+✅ **Prefer control over automation**
+✅ **Don't need massive parallelism** (2-3 tests sufficient)
+✅ **Want to minimize vendor lock-in**
+
+---
+
+### Choose **ECS Fargate + NAT** if:
+
+✅ **Unpredictable workload** (spiky, variable)
+✅ **Need massive parallelism** (10+ tests simultaneously)
+✅ **Prefer managed infrastructure** (less maintenance)
+✅ **Strong AWS expertise available** (networking, containers)
+✅ **Want auto-scaling** (elastic capacity)
+✅ **Security is paramount** (smaller attack surface)
+✅ **Cost is secondary** (willing to pay 2× for convenience)
+✅ **Already using ECS** (fits existing architecture)
+
+---
+
+## 💼 Recommendation by Team Profile
+
+### **Small Team (1-3 engineers):**
+→ **EC2 VMs**
+- Simpler to manage
+- Easier to troubleshoot
+- Lower cost
+
+### **Large Team (10+ engineers, dedicated DevOps):**
+→ **ECS Fargate + NAT**
+- Better automation
+- Scales with team growth
+- Less operational overhead
+
+### **Your Profile (100 apps, 80 tests/month, need static IP):**
+→ **EC2 VMs** ✅
+- Fits your workload perfectly
+- 50% cost savings
+- Simpler for your team
+
+---
+
+## 📊 Total Cost of Ownership (12 Months)
+
+### **EC2 VMs**
+
+| Item | Monthly | Annual |
+|------|---------|--------|
+| Compute | $8.87 | $106.44 |
+| Storage | $6.00 | $72.00 |
+| Elastic IPs | $7.30 | $87.60 |
+| S3 | $2.00 | $24.00 |
+| **Subtotal** | **$24.17** | **$290** |
+| Setup time (DevOps) | - | $600 (3h × $200/h) |
+| Maintenance (DevOps) | - | $800 (4h × $200/h) |
+| **TOTAL 12-month TCO** | | **$1,690** |
+
+---
+
+### **ECS Fargate + NAT**
+
+| Item | Monthly | Annual |
+|------|---------|--------|
+| ECS Compute | $12.42 | $149.04 |
+| NAT Gateway | $32.85 | $394.20 |
+| NAT Data | $0.90 | $10.80 |
+| S3 | $2.00 | $24.00 |
+| CloudWatch | $0.50 | $6.00 |
+| **Subtotal** | **$48.67** | **$584** |
+| Setup time (DevOps) | - | $1,400 (7h × $200/h) |
+| Maintenance (DevOps) | - | $400 (2h × $200/h) |
+| **TOTAL 12-month TCO** | | **$2,384** |
+
+**12-Month Savings with EC2:** $694 (29% cheaper)
+
+---
+
+## 🏁 Final Recommendation
+
+### **For Your Specific Requirements:**
+
+**Recommended: EC2 VMs (2 × t3.xlarge with Start/Stop)**
+
+**Rationale:**
+
+1. **Cost:** 50% cheaper monthly, 29% cheaper TCO
+2. **Simplicity:** Lower setup complexity, easier troubleshooting
+3. **Workload Fit:** 80 tests/month fits well within 2-3 parallel capacity
+4. **Static IP:** 2 IPs sufficient (one-time whitelist setup)
+5. **Team Skills:** Requires only basic AWS knowledge
+6. **Debugging:** SSH access invaluable for troubleshooting
+7. **Dashboard:** Can easily run live k6 dashboard
+
+**When to Reconsider:**
+
+- If test volume grows to 500+/month → ECS auto-scaling becomes valuable
+- If you need 10+ parallel tests regularly → ECS handles better
+- If you hire dedicated AWS/DevOps team → ECS maintenance becomes easier
+- If security/compliance requires immutable infrastructure → ECS advantage
+
+---
+
+## 📧 Next Steps
+
+### **If Choosing EC2 VMs:**
+
+**Email DevOps Team requesting:**
+- 2 × t3.xlarge instances (Ubuntu 24.04)
+- 2 × Elastic IPs
+- IAM user with EC2 start/stop permissions
+- Security groups configured
+- K6 installation script
+
+**Your responsibilities:**
+- GitHub Actions workflow setup
+- SSH key management
+- Test script repository structure
+- Results handling
+
+**Timeline:** 1 week to production
+
+---
+
+### **If Choosing ECS Fargate + NAT:**
+
+**Email DevOps Team requesting:**
+- VPC with public/private subnets
+- NAT Gateway with Elastic IP
+- ECS cluster (Fargate)
+- ECR repository
+- Task definition
+- IAM roles (execution + task)
+- CloudWatch log groups
+
+**Your responsibilities:**
+- Dockerfile creation
+- Docker image build/push
+- GitHub Actions workflow
+- Test script repository
+
+**Timeline:** 2-3 weeks to production
+
+---
+
+## 📞 Questions for Decision Makers
+
+Before deciding, consider:
+
+1. **What is our test volume growth projection?**
+   - Stable → EC2
+   - Growing rapidly → ECS
+
+2. **What AWS expertise does our team have?**
+   - Basic → EC2
+   - Advanced → ECS
+
+3. **Is cost or convenience more important?**
+   - Cost → EC2 (50% cheaper)
+   - Convenience → ECS (less maintenance)
+
+4. **How often will we run parallel tests?**
+   - Rarely (2-3 max) → EC2
+   - Frequently (5+) → ECS
+
+5. **What's our tolerance for troubleshooting complexity?**
+   - Prefer simple (SSH) → EC2
+   - Okay with CloudWatch → ECS
+
+6. **Do we already use ECS for other services?**
+   - No → EC2 (avoid learning curve)
+   - Yes → ECS (fits existing pattern)
+
+---
+
+## 🎯 Summary Table
+
+| Criteria | EC2 VMs | ECS + NAT | Recommendation |
+|----------|---------|-----------|----------------|
+| Monthly Cost | $24 ✅ | $48 | EC2 (50% cheaper) |
+| Setup Complexity | Low ✅ | High | EC2 (2-3h vs 6-8h) |
+| Ongoing Ops | Low-Medium | Low ✅ | Tie |
+| Scalability | 2-3 parallel | Unlimited ✅ | ECS |
+| Debugging | Easy ✅ | Hard | EC2 (SSH access) |
+| Maintenance | 2h/quarter | 1h/quarter ✅ | ECS |
+| Skills Required | Basic ✅ | Advanced | EC2 |
+| Flexibility | High ✅ | Medium | EC2 |
+| Static IP | ✅ (2 IPs) | ✅ (1 IP) | Tie |
+| **BEST FOR** | **Your use case** | Large-scale ops | **EC2** ✅ |
+
+---
+
+**Document Version:** 1.0
+**Date:** 2026-02-01
+**Prepared For:** Infrastructure Decision Making
+**Contact:** [Your Team]
+
+
