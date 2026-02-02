@@ -1,0 +1,11 @@
+orderId,customerId,amount,currency,items
+ORD001,CUST001,99.99,USD,"[{\"sku\":\"PROD001\",\"qty\":2}]"
+ORD002,CUST002,149.50,USD,"[{\"sku\":\"PROD002\",\"qty\":1}]"
+ORD003,CUST003,75.00,USD,"[{\"sku\":\"PROD003\",\"qty\":3}]"
+ORD004,CUST004,250.00,USD,"[{\"sku\":\"PROD004\",\"qty\":1}]"
+ORD005,CUST005,45.99,USD,"[{\"sku\":\"PROD005\",\"qty\":2}]"
+ORD006,CUST006,199.99,USD,"[{\"sku\":\"PROD001\",\"qty\":4}]"
+ORD007,CUST007,89.50,USD,"[{\"sku\":\"PROD002\",\"qty\":2}]"
+ORD008,CUST008,120.00,USD,"[{\"sku\":\"PROD003\",\"qty\":1}]"
+ORD009,CUST009,310.00,USD,"[{\"sku\":\"PROD004\",\"qty\":2}]"
+ORD010,CUST010,55.99,USD,"[{\"sku\":\"PROD005\",\"qty\":1}]"

@@ -1,0 +1,5 @@
+username,password,role
+admin,admin123,administrator
+testuser1,test123,user
+testuser2,test456,user
+apiuser,api789,api_client
